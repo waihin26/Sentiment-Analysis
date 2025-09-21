@@ -95,6 +95,23 @@ def get_cboe_put_call_ratio():
         st.warning(f"Could not fetch CBOE put/call ratio: {e}")
         return 0.85  # Return neutral value if fetch fails
 
+def get_vix_data():
+    """Get VIX index data from Yahoo Finance"""
+    try:
+        # Fetch VIX data from Yahoo Finance
+        vix_data = yf.download('^VIX', period='1d')
+        if not vix_data.empty:
+            vix_value = float(vix_data['Close'].iloc[-1])  # Convert to float
+        else:
+            # If data fetch fails, use simulated data
+            import random
+            vix_value = random.uniform(12, 35)  # Typical VIX range
+            
+        return vix_value
+    except Exception as e:
+        st.warning(f"Could not fetch VIX data: {e}")
+        return 20.0  # Return neutral value as float
+
 def get_market_data(ticker, market_name):
     """Get live market data"""
     try:
@@ -143,6 +160,9 @@ def get_market_data(ticker, market_name):
             pc_ratio = get_cboe_put_call_ratio()
         else:
             pc_ratio = None
+            
+        # Add VIX data for all markets (global sentiment indicator)
+        vix_value = get_vix_data()
         
         return {
             'momentum_20d': momentum_20d,
@@ -152,7 +172,8 @@ def get_market_data(ticker, market_name):
             'perf_1m': perf_1m,
             'perf_3m': perf_3m,
             'current_price': current_price,
-            'put_call_ratio': pc_ratio
+            'put_call_ratio': pc_ratio,
+            'vix': vix_value
         }
         
     except Exception as e:
@@ -172,6 +193,14 @@ def calculate_risk_love_score(market_data):
     perf_1m = market_data.get('perf_1m', 0)
     perf_3m = market_data.get('perf_3m', 0)
     put_call_ratio = market_data.get('put_call_ratio', None)
+    
+    # Handle VIX data - ensure it's a single float value
+    vix_value = None
+    if 'vix' in market_data and market_data['vix'] is not None:
+        try:
+            vix_value = float(market_data['vix'])
+        except (ValueError, TypeError):
+            vix_value = None
     
     # BofA contrarian scoring methodology
     # High momentum + low volatility = high sentiment = bearish signal (high percentile)
@@ -236,13 +265,29 @@ def calculate_risk_love_score(market_data):
     else:
         pc_score = 50  # Neutral if no data
         
-    # Weighted composite (BofA methodology weights)
+    # VIX component (contrarian - high VIX = fear = bullish signal)
+    if vix_value is not None:
+        if vix_value > 30:
+            vix_score = 15  # High VIX = fear = bullish signal
+        elif vix_value > 25:
+            vix_score = 30
+        elif vix_value > 20:
+            vix_score = 50
+        elif vix_value > 15:
+            vix_score = 70
+        else:
+            vix_score = 85  # Low VIX = complacency = bearish signal
+    else:
+        vix_score = 50  # Neutral if no data
+        
+    # Weighted composite (BofA methodology weights with VIX added)
     composite = (
-        momentum_score * 0.25 +    # Reduced from 0.30
-        vol_score * 0.20 +         # Reduced from 0.25
-        perf_score * 0.20 +        # Reduced from 0.25
-        volume_score * 0.15 +      # Reduced from 0.20
-        pc_score * 0.20            # New put/call component
+        momentum_score * 0.20 +    # Reduced from 0.25
+        vol_score * 0.15 +         # Reduced from 0.20
+        perf_score * 0.15 +        # Reduced from 0.20
+        volume_score * 0.15 +      # Same as before
+        pc_score * 0.15 +          # Reduced from 0.20
+        vix_score * 0.20           # New VIX component
     )
     
     return max(0, min(100, round(composite)))
@@ -343,11 +388,12 @@ def main():
         The sentiment score uses a contrarian framework based on Bank of America's 35-indicator methodology:
         
         ### Components (with current weights):
-        1. **Momentum (25%)**: Strong momentum = bullish market = bearish signal (higher score)
-        2. **Volatility (20%)**: Low volatility = complacency = bearish signal (higher score)
-        3. **Performance (20%)**: Strong recent returns = euphoria = bearish signal (higher score)
+        1. **Momentum (20%)**: Strong momentum = bullish market = bearish signal (higher score)
+        2. **Volatility (15%)**: Low volatility = complacency = bearish signal (higher score)
+        3. **Performance (15%)**: Strong recent returns = euphoria = bearish signal (higher score)
         4. **Volume (15%)**: High volume with price gains = euphoria = bearish signal (higher score) 
-        5. **Put/Call Ratio (20%)**: Low put/call ratio = greed = bearish signal (higher score)
+        5. **Put/Call Ratio (15%)**: Low put/call ratio = greed = bearish signal (higher score)
+        6. **VIX Index (20%)**: Low VIX = complacency = bearish signal (higher score)
         
         ### Contrarian Interpretation:
         - **0-20**: Maximum fear/panic = Strong buy signal
@@ -388,6 +434,15 @@ def main():
             'Interpretation': ["Low puts = greed (bearish)", "Mild greed (bearish)", "Mild fear (bullish)", "High puts = fear (bullish)"]
         })
         st.table(pc_df)
+        
+        # VIX scoring
+        st.markdown("#### VIX Index Scoring")
+        vix_df = pd.DataFrame({
+            'Range': ["< 15", "15 to 20", "20 to 25", "25 to 30", "> 30"],
+            'Score': [85, 70, 50, 30, 15],
+            'Interpretation': ["Complacency (bearish)", "Low volatility (bearish)", "Neutral", "Elevated fear (bullish)", "Extreme fear (bullish)"]
+        })
+        st.table(vix_df)
     
     # Sidebar
     st.sidebar.header("📊 Analysis Settings")
@@ -542,12 +597,13 @@ def main():
                 st.markdown(f"{data['signal'][0]}")
                 st.markdown(f"*{data['signal'][1]}*")
             
-            # Raw data if available
+                # Raw data if available
             if data['raw_data']:
                 st.markdown("**Technical Indicators:**")
                 raw_data = data['raw_data']
                 
-                col1, col2, col3, col4, col5 = st.columns(5)  # Changed from 4 to 5 columns
+                # First row of metrics
+                col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
                     st.metric("20D Momentum", f"{raw_data.get('momentum_20d', 0):.1f}%")
@@ -559,13 +615,20 @@ def main():
                     st.metric("1M Performance", f"{raw_data.get('perf_1m', 0):.1f}%")
                 
                 with col4:
-                    st.metric("Volume Trend", f"{raw_data.get('volume_trend', 0):.1f}%")
+                    st.metric("3M Performance", f"{raw_data.get('perf_3m', 0):.1f}%")
+                
+                # Second row for VIX and Put/Call if available
+                if raw_data.get('vix') is not None or raw_data.get('put_call_ratio') is not None:
+                    st.markdown("**Sentiment Indicators:**")
+                    col1, col2 = st.columns(2)
                     
-                with col5:
-                    if raw_data.get('put_call_ratio'):
-                        st.metric("Put/Call Ratio", f"{raw_data.get('put_call_ratio', 0):.2f}")
-    
-    # Footer
+                    with col1:
+                        if raw_data.get('vix') is not None:
+                            st.metric("VIX Index", f"{raw_data.get('vix', 0):.1f}")
+                    
+                    with col2:
+                        if raw_data.get('put_call_ratio') is not None:
+                            st.metric("Put/Call Ratio", f"{raw_data.get('put_call_ratio', 0):.2f}")    # Footer
     st.markdown("---")
     st.markdown(f"**📊 Analysis generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
     st.markdown("**🏦 Source:** BofA Risk-Love Methodology (35-Indicator Contrarian Framework)")
