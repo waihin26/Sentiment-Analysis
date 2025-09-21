@@ -6,6 +6,10 @@ import matplotlib.patches as mpatches
 import yfinance as yf
 from datetime import datetime, timedelta
 import warnings
+import requests
+import json
+from bs4 import BeautifulSoup
+import pandas_datareader.data as web
 warnings.filterwarnings('ignore')
 
 # Set page config
@@ -15,6 +19,138 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Add sidebar info button
+with st.sidebar:
+    with st.expander("ℹ️ Scoring Reference Guide"):
+        st.markdown("""
+        # Risk-Love Sentiment Calculation Guide
+
+        ## Market Data Indicators (30% Weight)
+        
+        ### 1. Momentum Score
+        | Range | Score | Signal |
+        |-------|--------|---------|
+        | > +20% | 90 | Strong Sell |
+        | +10% to +20% | 75 | Sell |
+        | -5% to +10% | 55 | Neutral |
+        | -15% to -5% | 30 | Buy |
+        | < -15% | 10 | Strong Buy |
+        
+        _Formula: `((current_price / 60day_MA) - 1) * 100`_
+        
+        ### 2. Volatility Score
+        | Range | Score | Signal |
+        |-------|--------|---------|
+        | < 8% | 85 | Strong Sell |
+        | 8% to 15% | 65 | Sell |
+        | 15% to 25% | 50 | Neutral |
+        | 25% to 35% | 25 | Buy |
+        | > 35% | 10 | Strong Buy |
+        
+        _Formula: `returns.std() * √252 * 100`_
+        
+        ### 3. Performance Score
+        | Range | Score | Signal |
+        |-------|--------|---------|
+        | > +25% | 90 | Strong Sell |
+        | +10% to +25% | 70 | Sell |
+        | -5% to +10% | 50 | Neutral |
+        | -20% to -5% | 25 | Buy |
+        | < -20% | 10 | Strong Buy |
+        
+        _Formula: `(1_month_return + 3_month_return) / 2`_
+        
+        ### 4. Volume Score
+        | Range | Score | Signal |
+        |-------|--------|---------|
+        | > +50% & ↑ price | 80 | Strong Sell |
+        | > +20% | 65 | Sell |
+        | -20% to +20% | 50 | Neutral |
+        | < -20% | 35 | Buy |
+        
+        _Formula: `((recent_volume / 20day_avg_volume) - 1) * 100`_
+
+        ## Options Market Data (25% Weight)
+        
+        ### 1. Put/Call Ratio Score
+        | Range | Score | Signal |
+        |-------|--------|---------|
+        | > 1.0 | 20 | Buy (Bearish sentiment) |
+        | 0.7 - 1.0 | 40 | Slightly Bearish |
+        | 0.5 - 0.7 | 50 | Neutral |
+        | 0.3 - 0.5 | 60 | Slightly Bullish |
+        | < 0.3 | 80 | Sell (Bullish sentiment) |
+
+        ### 2. VIX Level Score
+        | Range | Score | Signal |
+        |-------|--------|---------|
+        | > 35 | 20 | Buy (High Fear) |
+        | 25 - 35 | 40 | Moderate Fear |
+        | 15 - 25 | 50 | Neutral |
+        | 10 - 15 | 70 | Low Fear |
+        | < 10 | 90 | Sell (Complacency) |
+
+        ## Sentiment Surveys (25% Weight)
+
+        ### 1. AAII Sentiment Score
+        | Bull-Bear Spread | Score | Signal |
+        |------------------|--------|---------|
+        | > +30% | 90 | Strong Sell |
+        | +10% to +30% | 70 | Sell |
+        | -10% to +10% | 50 | Neutral |
+        | -30% to -10% | 30 | Buy |
+        | < -30% | 10 | Strong Buy |
+
+        ### 2. UMich Consumer Sentiment
+        | Percentile vs History | Score | Signal |
+        |--------------------|--------|---------|
+        | > 80th | 80 | Sell |
+        | 60th - 80th | 65 | Slightly Bearish |
+        | 40th - 60th | 50 | Neutral |
+        | 20th - 40th | 35 | Slightly Bullish |
+        | < 20th | 20 | Buy |
+
+        ## Fund Flows (20% Weight)
+
+        ### ETF Premium/Discount Score
+        | Premium to NAV | Score | Signal |
+        |----------------|--------|---------|
+        | > +2% | 80 | Sell |
+        | +1% to +2% | 65 | Slightly Bearish |
+        | -1% to +1% | 50 | Neutral |
+        | -2% to -1% | 35 | Slightly Bullish |
+        | < -2% | 20 | Buy |
+
+        ## Final Score Calculation
+        ```python
+        final_score = (
+            market_data_score * 0.30 +
+            options_score * 0.25 +
+            sentiment_survey_score * 0.25 +
+            fund_flow_score * 0.20
+        )
+        ```
+
+        ## Score Interpretation
+        | Final Score | Signal | Market Psychology |
+        |-------------|--------|-------------------|
+        | 80-100 | Strong Sell | Maximum Euphoria |
+        | 60-80 | Sell | Optimistic |
+        | 40-60 | Neutral | Balanced |
+        | 20-40 | Buy | Pessimistic |
+        | 0-20 | Strong Buy | Maximum Fear |
+        """)
+        
+        ### Final Score Interpretation
+        | Score | Signal | Psychology |
+        |-------|--------|------------|
+        | 80-100 | Strong Sell | Maximum Euphoria |
+        | 60-80 | Sell | Optimistic |
+        | 40-60 | Neutral | Balanced |
+        | 20-40 | Buy | Pessimistic |
+        | 0-20 | Strong Buy | Maximum Fear |
+        """)
 
 # Market definitions
 MARKETS = {
@@ -43,6 +179,98 @@ COLORS = {
     'bullish': '#fd8d3c',    # Orange (60-80)
     'euphoria': '#e31a1c'    # Red (80-100) - Bearish Signal
 }
+
+# Enhanced indicator categories with free data sources
+INDICATOR_CATEGORIES = {
+    'Market_Data': {
+        'weight': 0.30,
+        'indicators': ['momentum', 'volatility', 'performance', 'volume']
+    },
+    'Options_Data': {
+        'weight': 0.25,
+        'indicators': ['put_call_ratio', 'vix_level', 'vstoxx']
+    },
+    'Sentiment_Surveys': {
+        'weight': 0.25,
+        'indicators': ['aaii_sentiment', 'umich_sentiment']
+    },
+    'Fund_Flows': {
+        'weight': 0.20,
+        'indicators': ['etf_premium', 'short_interest']
+    }
+}
+
+def fetch_cboe_data():
+    """Fetch CBOE put-call ratio and VIX data"""
+    try:
+        # VIX data from Yahoo Finance
+        vix = yf.download('^VIX', period='1d')['Close'][-1]
+        
+        # Put-Call ratio from CBOE website (you'll need to implement web scraping)
+        # This is a placeholder - actual implementation would need website scraping
+        put_call = None
+        
+        return {'vix': vix, 'put_call_ratio': put_call}
+    except Exception as e:
+        st.error(f"Error fetching CBOE data: {str(e)}")
+        return None
+
+def fetch_sentiment_surveys():
+    """Fetch AAII and UMich sentiment data"""
+    try:
+        # FRED API for UMich sentiment (you'll need an API key)
+        umich = web.DataReader('UMCSENT', 'fred')
+        current_umich = umich.iloc[-1][0]
+        
+        return {'umich_sentiment': current_umich}
+    except Exception as e:
+        st.error(f"Error fetching sentiment surveys: {str(e)}")
+        return None
+
+def fetch_etf_data(symbol='EEM'):
+    """Fetch ETF premium/discount and other metrics"""
+    try:
+        etf = yf.Ticker(symbol)
+        info = etf.info
+        
+        # Calculate premium/discount (simplified)
+        current_price = etf.history(period='1d')['Close'][-1]
+        nav = info.get('previousClose', current_price)  # Simplified NAV calculation
+        premium = ((current_price / nav) - 1) * 100
+        
+        return {'premium_discount': premium}
+    except Exception as e:
+        st.error(f"Error fetching ETF data: {str(e)}")
+        return None
+
+def get_enhanced_market_data(ticker, market_name):
+    """Enhanced version of get_market_data with additional indicators"""
+    try:
+        # Get basic market data
+        basic_data = get_market_data(ticker, market_name)
+        if not basic_data:
+            return None
+            
+        # Add CBOE data
+        cboe_data = fetch_cboe_data()
+        if cboe_data:
+            basic_data.update(cboe_data)
+            
+        # Add sentiment surveys
+        survey_data = fetch_sentiment_surveys()
+        if survey_data:
+            basic_data.update(survey_data)
+            
+        # Add ETF data
+        etf_data = fetch_etf_data(ticker if ticker.startswith('E') else None)
+        if etf_data:
+            basic_data.update(etf_data)
+            
+        return basic_data
+        
+    except Exception as e:
+        st.error(f"Error in enhanced market data: {str(e)}")
+        return None
 
 # BofA 35-indicator categories
 INDICATOR_CATEGORIES = {
@@ -101,9 +329,20 @@ def get_market_data(ticker, market_name):
         recent_volume = hist['Volume'].iloc[-5:].mean()
         volume_trend = (recent_volume / avg_volume - 1) * 100 if avg_volume > 0 else 0
         
-        # Performance metrics
-        perf_1m = returns.iloc[-21:].mean() * 252 * 100 if len(returns) >= 21 else 0
-        perf_3m = returns.iloc[-63:].mean() * 252 * 100 if len(returns) >= 63 else 0
+        # Performance metrics - Calculate actual returns, not annualized
+        # 1-month performance (21 trading days)
+        if len(hist) >= 21:
+            start_price_1m = hist['Close'].iloc[-21]
+            perf_1m = ((current_price / start_price_1m) - 1) * 100
+        else:
+            perf_1m = 0
+            
+        # 3-month performance (63 trading days)
+        if len(hist) >= 63:
+            start_price_3m = hist['Close'].iloc[-63]
+            perf_3m = ((current_price / start_price_3m) - 1) * 100
+        else:
+            perf_3m = 0
         
         return {
             'momentum_20d': momentum_20d,
