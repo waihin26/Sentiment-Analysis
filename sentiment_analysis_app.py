@@ -16,65 +16,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Add sidebar info button
-with st.sidebar:
-    with st.expander("ℹ️ Scoring Reference Guide"):
-        st.markdown("""
-        ## Sentiment Indicator Components
-        
-        ### 1. Momentum Score (30% Weight)
-        | Range | Score | Signal |
-        |-------|--------|---------|
-        | > +20% | 90 | Strong Sell |
-        | +10% to +20% | 75 | Sell |
-        | -5% to +10% | 55 | Neutral |
-        | -15% to -5% | 30 | Buy |
-        | < -15% | 10 | Strong Buy |
-        
-        _Formula: `((current_price / 60day_MA) - 1) * 100`_
-        
-        ### 2. Volatility Score (25% Weight)
-        | Range | Score | Signal |
-        |-------|--------|---------|
-        | < 8% | 85 | Strong Sell |
-        | 8% to 15% | 65 | Sell |
-        | 15% to 25% | 50 | Neutral |
-        | 25% to 35% | 25 | Buy |
-        | > 35% | 10 | Strong Buy |
-        
-        _Formula: `returns.std() * √252 * 100`_
-        
-        ### 3. Performance Score (25% Weight)
-        | Range | Score | Signal |
-        |-------|--------|---------|
-        | > +25% | 90 | Strong Sell |
-        | +10% to +25% | 70 | Sell |
-        | -5% to +10% | 50 | Neutral |
-        | -20% to -5% | 25 | Buy |
-        | < -20% | 10 | Strong Buy |
-        
-        _Formula: `(1_month_return + 3_month_return) / 2`_
-        
-        ### 4. Volume Score (20% Weight)
-        | Range | Score | Signal |
-        |-------|--------|---------|
-        | > +50% & ↑ price | 80 | Strong Sell |
-        | > +20% | 65 | Sell |
-        | -20% to +20% | 50 | Neutral |
-        | < -20% | 35 | Buy |
-        
-        _Formula: `((recent_volume / 20day_avg_volume) - 1) * 100`_
-        
-        ### Final Score Interpretation
-        | Score | Signal | Psychology |
-        |-------|--------|------------|
-        | 80-100 | Strong Sell | Maximum Euphoria |
-        | 60-80 | Sell | Optimistic |
-        | 40-60 | Neutral | Balanced |
-        | 20-40 | Buy | Pessimistic |
-        | 0-20 | Strong Buy | Maximum Fear |
-        """)
-
 # Market definitions
 MARKETS = {
     'Global': {'ticker': '^GSPC', 'name': '🌍 Global', 'region': 'Global'},
